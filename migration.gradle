@@ -113,112 +113,7 @@ tasks.register('migration') {
             }
         }
 
-        // 3. 唯一的 gunpack_info.json：提取字段到 gradle.properties，并改写为占位符形式
-        def infoFiles = []
-        if (assetsDir.isDirectory()) {
-            assetsDir.eachDir { File namespaceDir ->
-                def infoFile = new File(namespaceDir, 'cgc_info/gunpack_info.json')
-                if (infoFile.isFile()) {
-                    infoFiles << infoFile
-                }
-            }
-        }
-        if (infoFiles.size() > 1) {
-            note("found ${infoFiles.size()} gunpack_info.json under assets/, skip metadata extraction")
-        } else if (infoFiles.size() == 1) {
-            def infoFile = infoFiles[0]
-            if (infoFile.getText('UTF-8').contains('${')) {
-                note("skip ${infoFile.path}: already uses placeholders")
-            } else {
-                Map json = null
-                try {
-                    def parsed = readJson(infoFile)
-                    if (parsed instanceof Map) {
-                        json = parsed
-                    }
-                } catch (Exception exception) {
-                    note("skip ${infoFile.path}: ${exception.message}")
-                }
-                if (json != null) {
-                    // CGC 同时兼容 TaCZ 的老字段名（version / name / desc / url）
-                    def infoVersion = json.containsKey('gunpack_version') ? json.gunpack_version : json.version
-                    def infoName = json.containsKey('name_lang') ? json.name_lang : json.name
-                    def infoDesc = json.containsKey('tooltip_lang') ? json.tooltip_lang : json.desc
-                    def infoUrl = json.containsKey('gunpack_url') ? json.gunpack_url : json.url
-                    def looksLikeInfo = ['gunpack_version', 'version', 'name_lang', 'name', 'tooltip_lang', 'desc', 'license', 'authors', 'date', 'gunpack_url', 'url'].any { json.containsKey(it) }
-                    if (looksLikeInfo) {
-                        def namespaceDir = infoFile.parentFile.parentFile
-                        def extract = { String propertyKey, Object value ->
-                            if (!isEmptyValue(value) && !isPlaceholder(value) && setProperty(propsFile, propertyKey, value)) {
-                                note("${propertyKey} updated from ${infoFile.name}")
-                            }
-                        }
-                        extract('mod_version', infoVersion)
-                        extract('mod_license', json.license)
-                        extract('pack_date', json.date)
-                        extract('mod_display_url', infoUrl)
-                        def authors = json.authors
-                        if (authors instanceof List && !authors.isEmpty()) {
-                            def authorList = authors.collect { String.valueOf(it) }
-                            if (setProperty(propsFile, 'pack_authors', authorList.collect { JsonOutput.toJson(it) }.join(', '))) {
-                                note("pack_authors updated from ${infoFile.name}")
-                            }
-                            if (setProperty(propsFile, 'mod_authors', authorList.join(', '))) {
-                                note("mod_authors updated from ${infoFile.name}")
-                            }
-                            if (hasPropertyValue(propsFile, 'mod_credits', 'YourNameHere, OtherNameHere') && setProperty(propsFile, 'mod_credits', '')) {
-                                note('mod_credits cleared (template default)')
-                            }
-                        }
-                        def langFile = new File(namespaceDir, 'lang/en_us.json')
-                        def translatedName = null
-                        if (langFile.isFile()) {
-                            try {
-                                def lang = readJson(langFile)
-                                if (lang instanceof Map) {
-                                    if (!isEmptyValue(infoName) && lang.containsKey(String.valueOf(infoName))) {
-                                        translatedName = String.valueOf(lang[String.valueOf(infoName)])
-                                        setProperty(propsFile, 'pack_description', translatedName + ' resources')
-                                    }
-                                    if (!isEmptyValue(infoDesc) && lang.containsKey(String.valueOf(infoDesc))) {
-                                        setProperty(propsFile, 'mod_description', String.valueOf(lang[String.valueOf(infoDesc)]))
-                                    }
-                                }
-                            } catch (Exception exception) {
-                                note("skip ${langFile.path}: ${exception.message}")
-                            }
-                        }
-                        if (!isEmptyValue(translatedName)) {
-                            def modNameValue = translatedName.replaceAll(/[^\p{L}\p{N} ]+/, '').replaceAll(/\s+/, ' ').trim()
-                            if (modNameValue) {
-                                if (setProperty(propsFile, 'mod_name', modNameValue)) {
-                                    note("mod_name updated from ${langFile.name}")
-                                }
-                                if (setProperty(propsFile, 'file_name', modNameValue.replace(' ', '_'))) {
-                                    note("file_name updated from ${langFile.name}")
-                                }
-                            }
-                        }
-                        def name = isEmptyValue(infoName) ? '' : String.valueOf(infoName)
-                        def desc = isEmptyValue(infoDesc) ? '' : String.valueOf(infoDesc)
-                        infoFile.setText('{\n' +
-                                '\t"gunpack_version": "${mod_version}",\n' +
-                                '\t"name_lang": ' + JsonOutput.toJson(name) + ',\n' +
-                                '\t"tooltip_lang": ' + JsonOutput.toJson(desc) + ',\n' +
-                                '\t"license": "${mod_license}",\n' +
-                                '\t"authors": [\n' +
-                                '\t\t${pack_authors}\n' +
-                                '\t],\n' +
-                                '\t"date": "${pack_date}",\n' +
-                                '\t"gunpack_url": "${mod_display_url}"\n' +
-                                '}\n', 'UTF-8')
-                        note("rewrote ${infoFile.path} with placeholders")
-                    }
-                }
-            }
-        }
-
-        // 4. namespace -> mod_id；根目录 gunpack.meta.json -> data/<namespace>/cgc_meta/gunpack.meta.json
+        // 3. 元数据：优先使用根目录 gunpack.meta.json 里 namespace 对应的 gunpack_info.json
         def rootMeta = new File(projectDir, 'gunpack.meta.json')
         Map meta = null
         if (rootMeta.isFile()) {
@@ -235,6 +130,188 @@ tasks.register('migration') {
         if (meta != null && !isEmptyValue(meta.namespace) && !isPlaceholder(meta.namespace)) {
             namespace = String.valueOf(meta.namespace).trim()
         }
+
+        def infoFiles = []
+        if (assetsDir.isDirectory()) {
+            assetsDir.eachDir { File namespaceDir ->
+                def infoFile = new File(namespaceDir, 'cgc_info/gunpack_info.json')
+                if (infoFile.isFile()) {
+                    infoFiles << infoFile
+                }
+            }
+        }
+        // 多命名空间枪包优先取 gunpack.meta.json 里 namespace 对应的那份
+        if (infoFiles.size() > 1 && namespace != null) {
+            def preferred = infoFiles.find { it.parentFile.parentFile.name == namespace }
+            if (preferred != null) {
+                note("using assets/${namespace}/cgc_info/gunpack_info.json among ${infoFiles.size()} candidates")
+                infoFiles = [preferred]
+            }
+        }
+        if (infoFiles.size() > 1) {
+            note("found ${infoFiles.size()} gunpack_info.json under assets/, skip metadata extraction")
+        }
+        def infoFile = infoFiles.size() == 1 ? infoFiles[0] : null
+        Map info = null
+        if (infoFile != null) {
+            if (infoFile.getText('UTF-8').contains('${')) {
+                note("skip ${infoFile.path}: already uses placeholders")
+            } else {
+                try {
+                    def parsed = readJson(infoFile)
+                    if (parsed instanceof Map) {
+                        info = parsed
+                    }
+                } catch (Exception exception) {
+                    note("skip ${infoFile.path}: ${exception.message}")
+                }
+            }
+        }
+        // CGC 同时兼容 TaCZ 的老字段名（version / name / desc / url）
+        def looksLikeInfo = info != null && ['gunpack_version', 'version', 'name_lang', 'name', 'tooltip_lang', 'desc',
+                                             'license', 'authors', 'date', 'gunpack_url', 'url'].any { info.containsKey(it) }
+        def infoName = info == null ? null : (info.containsKey('name_lang') ? info.name_lang : info.name)
+        def infoDesc = info == null ? null : (info.containsKey('tooltip_lang') ? info.tooltip_lang : info.desc)
+
+        // 3.1 gunpack_info.json 的版本/协议/日期/链接/作者写入 gradle.properties
+        if (looksLikeInfo) {
+            def extract = { String propertyKey, Object value ->
+                if (!isEmptyValue(value) && !isPlaceholder(value) && setProperty(propsFile, propertyKey, value)) {
+                    note("${propertyKey} updated from ${infoFile.name}")
+                }
+            }
+            extract('mod_version', info.containsKey('gunpack_version') ? info.gunpack_version : info.version)
+            extract('mod_license', info.license)
+            extract('pack_date', info.date)
+            extract('mod_display_url', info.containsKey('gunpack_url') ? info.gunpack_url : info.url)
+            def authors = info.authors
+            if (authors instanceof List && !authors.isEmpty()) {
+                def authorList = authors.collect { String.valueOf(it) }
+                if (setProperty(propsFile, 'pack_authors', authorList.collect { JsonOutput.toJson(it) }.join(', '))) {
+                    note("pack_authors updated from ${infoFile.name}")
+                }
+                if (setProperty(propsFile, 'mod_authors', authorList.join(', '))) {
+                    note("mod_authors updated from ${infoFile.name}")
+                }
+                if (hasPropertyValue(propsFile, 'mod_credits', 'YourNameHere, OtherNameHere') && setProperty(propsFile, 'mod_credits', '')) {
+                    note('mod_credits cleared (template default)')
+                }
+            }
+        }
+
+        // 3.2 名称和描述：info 的键 -> lang -> pack.<namespace>.name -> 该命名空间下唯一的 pack.*.name -> 原始枪包名
+        def namespaceDir = infoFile == null ? null : infoFile.parentFile.parentFile
+        if (namespaceDir == null) {
+            if (namespace != null) {
+                def candidate = new File(assetsDir, namespace)
+                if (candidate.isDirectory()) {
+                    namespaceDir = candidate
+                }
+            } else if (assetsDir.isDirectory()) {
+                def dirs = assetsDir.listFiles()?.findAll { it.isDirectory() }
+                if (dirs != null && dirs.size() == 1) {
+                    namespaceDir = dirs[0]
+                }
+            }
+        }
+        Map lang = null
+        def langFile = namespaceDir == null ? null : new File(namespaceDir, 'lang/en_us.json')
+        if (langFile != null && langFile.isFile()) {
+            try {
+                def parsed = readJson(langFile)
+                if (parsed instanceof Map) {
+                    lang = parsed
+                }
+            } catch (Exception exception) {
+                note("skip ${langFile.path}: ${exception.message}")
+            }
+        }
+        def translate = { Object key ->
+            if (lang == null || isEmptyValue(key)) {
+                return null
+            }
+            def lookupKey = String.valueOf(key)
+            return lang.containsKey(lookupKey) ? String.valueOf(lang[lookupKey]) : null
+        }
+        def uniquePackKey = { String suffix ->
+            if (lang == null) {
+                return null
+            }
+            def prefix = namespace == null ? 'pack.' : "pack.${namespace}."
+            def candidates = lang.keySet().findAll { it.toString() ==~ /^pack\..*\.name$/ || it.toString() ==~ /^pack\..*\.desc$/ }
+                    .findAll { it.toString().endsWith("." + suffix) && it.toString().startsWith(prefix) }
+            return candidates.size() == 1 ? String.valueOf(lang[candidates[0]]) : null
+        }
+        def translatedName = translate(infoName)
+        def translatedDesc = translate(infoDesc)
+        if (translatedName == null && namespace != null) {
+            translatedName = translate("pack.${namespace}.name")
+        }
+        if (translatedDesc == null && namespace != null) {
+            translatedDesc = translate("pack.${namespace}.desc")
+        }
+        if (translatedName == null) {
+            translatedName = uniquePackKey('name')
+        }
+        if (translatedDesc == null) {
+            translatedDesc = uniquePackKey('desc')
+        }
+        // 批量转换传入的原始枪包名只作兜底，避免产物退回模板默认的 file_name
+        def nameFromSource = false
+        if (isEmptyValue(translatedName)) {
+            def sourceName = project.findProperty('pack_source_name')
+            if (sourceName != null && !sourceName.toString().trim().isEmpty()) {
+                translatedName = sourceName.toString().trim()
+                nameFromSource = true
+                note("pack name from source: ${translatedName}")
+            }
+        }
+        // 名称里的 Minecraft 颜色/格式代码（§4、§l 等）不能进入 mod_name 和 file_name
+        if (translatedName != null) {
+            translatedName = translatedName.replaceAll("${(char) 0x00A7}[0-9a-zA-Z]", '').trim()
+        }
+        if (!isEmptyValue(translatedName)) {
+            def modNameValue = nameFromSource
+                    ? translatedName.replaceAll(/[\\\/:*?"<>|]+/, '_').replaceAll(/\s+/, ' ').trim()
+                    : translatedName.replaceAll(/[^\p{L}\p{N} ]+/, '').replaceAll(/\s+/, ' ').trim()
+            if (modNameValue) {
+                def origin = nameFromSource ? 'pack source name' : (langFile == null ? 'gunpack_info.json' : langFile.name)
+                if (setProperty(propsFile, 'mod_name', modNameValue)) {
+                    note("mod_name updated from ${origin}")
+                }
+                if (setProperty(propsFile, 'file_name', modNameValue.replace(' ', '_'))) {
+                    note("file_name updated from ${origin}")
+                }
+                if (setProperty(propsFile, 'pack_description', modNameValue + ' resources')) {
+                    note("pack_description updated from ${origin}")
+                }
+            }
+        }
+        if (!isEmptyValue(translatedDesc)) {
+            if (setProperty(propsFile, 'mod_description', translatedDesc)) {
+                note("mod_description updated from ${langFile == null ? 'gunpack_info.json' : langFile.name}")
+            }
+        }
+
+        // 3.3 gunpack_info.json 改写为占位符形式
+        if (looksLikeInfo) {
+            def name = isEmptyValue(infoName) ? '' : String.valueOf(infoName)
+            def desc = isEmptyValue(infoDesc) ? '' : String.valueOf(infoDesc)
+            infoFile.setText('{\n' +
+                    '\t"gunpack_version": "${mod_version}",\n' +
+                    '\t"name_lang": ' + JsonOutput.toJson(name) + ',\n' +
+                    '\t"tooltip_lang": ' + JsonOutput.toJson(desc) + ',\n' +
+                    '\t"license": "${mod_license}",\n' +
+                    '\t"authors": [\n' +
+                    '\t\t${pack_authors}\n' +
+                    '\t],\n' +
+                    '\t"date": "${pack_date}",\n' +
+                    '\t"gunpack_url": "${mod_display_url}"\n' +
+                    '}\n', 'UTF-8')
+            note("rewrote ${infoFile.path} with placeholders")
+        }
+
+        // 4. namespace -> mod_id；根目录 gunpack.meta.json -> data/<namespace>/cgc_meta/gunpack.meta.json
         if (namespace == null && assetsDir.isDirectory()) {
             def namespaces = assetsDir.listFiles()?.findAll { it.isDirectory() }
             if (namespaces != null && namespaces.size() == 1) {
