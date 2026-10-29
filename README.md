@@ -39,8 +39,11 @@
 
 ## 从旧格式迁移
 
-1. 将`assets/{namespace}/gunpack_info.json`移至`assets/{namespace}/cgc_info/gunpack_info.json`
-2. 将`gunpack.meta.json`移至`data/{namespace}/cgc_meta/gunpack.meta.json`
+- 将原本放置于`./tacz/`的枪包解压到模板文件夹根目录
+
+然后，任选以下一种方式：
+- 在 Windows 下运行`migration.cmd`
+- 或者，在 Intellij IDEA 中用 JDK 17 执行 Gradle 的 `migration` 任务
 
 # CGC Minecraft Pack Build Kit
 
@@ -79,5 +82,8 @@ Build artifacts will be generated in `build/libs`:
 
 ## Migrating from the Legacy Format
 
-1. Move `assets/{namespace}/gunpack_info.json` to `assets/{namespace}/cgc_info/gunpack_info.json`.
-2. Move `gunpack.meta.json` to `data/{namespace}/cgc_meta/gunpack.meta.json`.
+- Extract the gun pack originally placed in `./tacz/` directly into the root directory of the template folder.
+
+Then, choose either of the following methods:
+- Run `migration.cmd` on Windows.
+- Alternatively, open the project in IntelliJ IDEA and run the Gradle `migration` task using JDK 17.
